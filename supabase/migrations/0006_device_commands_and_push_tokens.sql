@@ -40,7 +40,16 @@ create policy push_tokens_manage_own on push_tokens for all
 -- device_commands_select_own_child; insert used by
 -- device_commands_insert_for_parents; update used by
 -- device_commands_update_status_own_child. No policy uses delete.
-grant select, insert, update on device_commands to authenticated;
+--
+-- The child's update policy is scoped to "own child" via RLS, but RLS alone
+-- cannot limit *which columns* an allowed UPDATE may touch -- a table-wide
+-- `grant update` would let the child's device account rewrite command_type,
+-- requested_by, or any timestamp on its own row, not just status. Since
+-- device_commands is the theft/emergency-lock mechanism and RLS+grants are
+-- the entire security boundary here, the update grant is column-scoped to
+-- exactly what the child is supposed to change.
+grant select, insert on device_commands to authenticated;
+grant update (status, delivered_at, acknowledged_at) on device_commands to authenticated;
 -- push_tokens: the single `for all` policy (push_tokens_manage_own) covers
 -- select, insert, update, and delete.
 grant select, insert, update, delete on push_tokens to authenticated;

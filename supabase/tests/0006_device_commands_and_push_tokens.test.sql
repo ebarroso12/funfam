@@ -65,6 +65,33 @@ select test.assert_true(
   (select status from device_commands where id = '55555555-5555-5555-5555-555555555555') = 'acknowledged',
   'child device account must be able to update its own command status to acknowledged');
 
+-- the child device account cannot update command_type on its own command
+-- row -- only (status, delivered_at, acknowledged_at) are column-granted
+-- for update, per the controller's ruling that a table-wide update grant
+-- would let the child's device account rewrite command_type (e.g. flip
+-- 'lock' to 'unlock'), requested_by, or created_at on its own row, not just
+-- status. Empirically confirmed: Postgres's column-level privilege check
+-- rejects this outright with "permission denied for table device_commands"
+-- (SQLSTATE 42501, caught here as insufficient_privilege), before RLS even
+-- gets a chance to filter the row.
+do $$
+begin
+  perform test.assume_user('33333333-3333-3333-3333-333333333333');
+  update device_commands set command_type = 'unlock'
+    where id = '55555555-5555-5555-5555-555555555555';
+  raise exception 'ASSERTION FAILED: child device account updated command_type on its own device_commands row';
+exception
+  when insufficient_privilege then
+    null; -- expected: column-level grant rejected the update
+end $$;
+
+-- confirm command_type is unchanged (defense in depth: this would also
+-- have caught a silently-filtered 0-row update, had the rejection not
+-- raised).
+select test.assert_true(
+  (select command_type from device_commands where id = '55555555-5555-5555-5555-555555555555') = 'lock',
+  'child device account''s attempted command_type update must have no effect');
+
 -- the child device account cannot insert a device_commands row at all --
 -- no insert policy is granted to it, only to parents. requested_by below is
 -- a real parent's user_id (Edson's) so the only possible rejection is RLS
