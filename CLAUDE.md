@@ -68,27 +68,30 @@ project (WSL2's container runtime repeatedly hung and once took the whole
 machine down) — **this project has actually been tested, from very early
 in the implementation onward, against a Supabase dev stack running on a
 remote VPS over SSH**, not against a locally-running `supabase start`. Keep
-using that workflow:
+using that workflow. This is a public repo, so the specific SSH target, VPS
+repo path, and dev DB connection string are intentionally kept out of this
+file — find them in this plan's execution ledger (git-ignored, under
+`.superpowers/sdd/<plan-name>/progress.md` in the worktree that ran it), not
+here:
 
 ```bash
-# SSH target (key-based auth, no password needed):
-#   root@193.203.182.112
-# Repo clone on the VPS, same branch as this worktree:
-#   /root/projetos/funfam
+# <ssh-target> below = the VPS target from the ledger. <branch> = this worktree's branch.
 
 # 1. Sync the VPS clone with whatever you just pushed/committed locally:
-ssh root@193.203.182.112 "cd /root/projetos/funfam && git fetch origin && git reset --hard origin/<branch>"
+ssh <ssh-target> "cd <vps-repo-path> && git fetch origin && git reset --hard origin/<branch>"
 
 # (If you're iterating on uncommitted local changes instead, scp the
-# changed file(s) to the same path under /root/projetos/funfam/ first.)
+# changed file(s) to the same path on the VPS first.)
 
 # 2. Apply every migration fresh (also applies supabase/seed.sql — see the
 #    UUID-range note below) and bring up the dev stack:
-ssh root@193.203.182.112 "cd /root/projetos/funfam && supabase db reset"
+ssh <ssh-target> "cd <vps-repo-path> && supabase db reset"
 
 # 3. Run each RLS test file over SSH, against the VPS's local Postgres
-#    (reachable only via SSH, not exposed publicly):
-ssh root@193.203.182.112 "psql 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' -f /root/projetos/funfam/supabase/tests/0001_parents_and_children.test.sql"
+#    (reachable only via SSH — firewalled from the public internet; `cd`
+#    into the repo first, since \i in each test file resolves relative to
+#    the current directory):
+ssh <ssh-target> "cd <vps-repo-path> && psql '<dev-db-url-from-ledger>' -f supabase/tests/0001_parents_and_children.test.sql"
 # (repeat per supabase/tests/000N_*.test.sql file)
 
 supabase link                      # connect to the real hosted project (Task 7 only)
@@ -103,7 +106,7 @@ which live inside `begin; ... rollback;`. `seed.sql` therefore uses only
 hex-letter UUIDs (`aaaa…`/`bbbb…`/`cccc…`/`dddd…`/`eeee…`/`ffff…`) and a
 distinct email domain, deliberately disjoint from every test file's digit-
 only fixture UUIDs (`1111…`, `2222…`, `3333…`, `4444…`, `5555…`, `6666…`,
-`7777…`) and `@example.com` emails. If you ever add a new UUID to
+`7777…`, `8888…`, `9999…`) and `@example.com` emails. If you ever add a new UUID to
 `seed.sql`, keep it in that same hex-letter range — otherwise a real
 `supabase db reset` followed by any test file's plain (non-`on conflict`)
 fixture insert will hit a unique-constraint violation against seed's
