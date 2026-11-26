@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 \i supabase/tests/_helpers.sql
 
 begin;

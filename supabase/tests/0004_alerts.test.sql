@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 \i supabase/tests/_helpers.sql
 
 begin;
@@ -36,6 +37,25 @@ select test.assert_true(
   (select count(*) from alerts
      where child_id = '44444444-4444-4444-4444-444444444444' and alert_type = 'panic') = 1,
   'child device account must be able to insert a panic alert for its own child');
+
+-- the child device account's select on alerts returns 0 rows -- there is no
+-- select policy granted to it, only `alerts_select_for_parents`.
+select test.assume_user('33333333-3333-3333-3333-333333333333');
+select test.assert_true(
+  (select count(*) from alerts) = 0,
+  'child device account must not be able to select any alerts row');
+
+-- an alert_type not in the check constraint's allowed list is rejected.
+do $$
+begin
+  perform test.assume_user('33333333-3333-3333-3333-333333333333');
+  insert into alerts (child_id, alert_type) values
+    ('44444444-4444-4444-4444-444444444444', 'not_a_real_alert_type');
+  raise exception 'ASSERTION FAILED: inserted an alert with an invalid alert_type';
+exception
+  when check_violation then
+    null; -- expected: the alert_type check constraint rejected it
+end $$;
 
 -- the child device account cannot insert an alert for a child_id it does
 -- not own. The target child_id (Ana, 77777777...) genuinely exists in

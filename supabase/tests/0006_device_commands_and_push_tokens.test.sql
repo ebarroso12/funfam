@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 \i supabase/tests/_helpers.sql
 
 begin;
@@ -7,15 +8,20 @@ begin;
 -- file rolled its fixtures back. Inserted as postgres (bypasses RLS), which
 -- is the role this script connects as before any test.assume_user() switch
 -- below.
+-- Includes a second real child (Ana, owned by a different device account)
+-- so this table -- the theft-lock mechanism -- gets direct cross-child test
+-- coverage, which it previously had none of.
 insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'edson@example.com'),
   ('22222222-2222-2222-2222-222222222222', 'esposa@example.com'),
-  ('33333333-3333-3333-3333-333333333333', 'vitor-device@example.com');
+  ('33333333-3333-3333-3333-333333333333', 'vitor-device@example.com'),
+  ('66666666-6666-6666-6666-666666666666', 'ana-device@example.com');
 insert into parents (user_id, full_name) values
   ('11111111-1111-1111-1111-111111111111', 'Edson'),
   ('22222222-2222-2222-2222-222222222222', 'Esposa');
 insert into children (id, device_user_id, full_name, birthdate) values
-  ('44444444-4444-4444-4444-444444444444', '33333333-3333-3333-3333-333333333333', 'Vitor', '2019-01-01');
+  ('44444444-4444-4444-4444-444444444444', '33333333-3333-3333-3333-333333333333', 'Vitor', '2019-01-01'),
+  ('77777777-7777-7777-7777-777777777777', '66666666-6666-6666-6666-666666666666', 'Ana', '2021-01-01');
 
 -- a parent (Edson) can insert a 'lock' command for his child, with
 -- requested_by set to his own auth.uid(), per
@@ -39,6 +45,32 @@ exception
   when insufficient_privilege then
     null; -- expected: RLS rejected the insert
 end $$;
+
+-- positive: a parent CAN select a device_commands row after it's inserted
+-- (device_commands_select_for_parents had zero direct test coverage before
+-- this fix wave).
+select test.assume_user('11111111-1111-1111-1111-111111111111');
+select test.assert_true(
+  (select status from device_commands where id = '55555555-5555-5555-5555-555555555555') = 'pending',
+  'a parent must be able to select the device_commands row it created');
+
+-- Ana's device account cannot select Vitor's device_commands row -- RLS
+-- (device_commands_select_own_child) filters it out entirely.
+select test.assume_user('66666666-6666-6666-6666-666666666666');
+select test.assert_true(
+  (select count(*) from device_commands where id = '55555555-5555-5555-5555-555555555555') = 0,
+  'Ana''s device account must not be able to select Vitor''s device_commands row');
+
+-- Ana's device account cannot update Vitor's device_commands row --
+-- device_commands_update_status_own_child's USING clause filters the row
+-- out of what Ana's UPDATE can even touch, so it affects 0 rows rather than
+-- raising.
+update device_commands set status = 'delivered' where id = '55555555-5555-5555-5555-555555555555';
+
+select test.assume_user('11111111-1111-1111-1111-111111111111');
+select test.assert_true(
+  (select status from device_commands where id = '55555555-5555-5555-5555-555555555555') = 'pending',
+  'Ana''s device account''s update of Vitor''s device_commands row must have no effect (RLS filters it to 0 rows)');
 
 -- the child device account can select its own pending command via
 -- device_commands_select_own_child.
@@ -106,6 +138,19 @@ begin
 exception
   when insufficient_privilege then
     null; -- expected: RLS rejected the insert (no insert policy applies)
+end $$;
+
+-- nobody -- not even a parent -- can delete a device_commands row: no
+-- delete grant exists on this table for any role, so the attempt fails at
+-- the GRANT layer before RLS is even consulted.
+do $$
+begin
+  perform test.assume_user('11111111-1111-1111-1111-111111111111');
+  delete from device_commands where id = '55555555-5555-5555-5555-555555555555';
+  raise exception 'ASSERTION FAILED: a parent deleted a device_commands row (no delete grant should exist)';
+exception
+  when insufficient_privilege then
+    null; -- expected: no delete grant exists on device_commands for any role
 end $$;
 
 -- any user can insert their own push_tokens row.

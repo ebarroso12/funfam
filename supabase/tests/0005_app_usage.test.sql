@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 \i supabase/tests/_helpers.sql
 
 begin;
@@ -115,6 +116,32 @@ select test.assert_true(
   (select count(*) from app_usage
      where child_id in ('44444444-4444-4444-4444-444444444444', '77777777-7777-7777-7777-777777777777')) = 2,
   'parent must be able to select all app_usage rows for its children');
+
+-- the update policy's WITH CHECK side specifically: the child attempts to
+-- move its own app_usage row to a different child_id (Ana's) it doesn't
+-- own. The existing row passes the UPDATE policy's USING clause (it's
+-- Vitor's own row), but the resulting new row fails WITH CHECK
+-- (is_own_child('77777777...') is false for Vitor), which Postgres raises
+-- as an error rather than silently filtering.
+do $$
+begin
+  perform test.assume_user('33333333-3333-3333-3333-333333333333');
+  update app_usage set child_id = '77777777-7777-7777-7777-777777777777'
+    where child_id = '44444444-4444-4444-4444-444444444444'
+      and app_package = 'com.whatsapp' and usage_date = '2026-11-26';
+  raise exception 'ASSERTION FAILED: child device account moved its own app_usage row to a different child_id';
+exception
+  when insufficient_privilege then
+    null; -- expected: WITH CHECK rejected the new row
+end $$;
+
+-- confirm the row is unchanged (still owned by Vitor's child_id).
+select test.assume_user('11111111-1111-1111-1111-111111111111');
+select test.assert_true(
+  (select count(*) from app_usage
+     where child_id = '44444444-4444-4444-4444-444444444444'
+       and app_package = 'com.whatsapp' and usage_date = '2026-11-26') = 1,
+  'the app_usage row must still belong to its original child_id after the rejected move');
 
 select 'OK: 0005 tests passed';
 

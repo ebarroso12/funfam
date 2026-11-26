@@ -1,3 +1,8 @@
+-- Silences the repeated "NOTICE: schema \"test\" already exists, skipping"
+-- that otherwise prints on every re-run after the first against the same
+-- long-lived stack.
+set client_min_messages = warning;
+
 create schema if not exists test;
 
 create or replace function test.assume_user(p_uid uuid, p_role text default 'authenticated')
