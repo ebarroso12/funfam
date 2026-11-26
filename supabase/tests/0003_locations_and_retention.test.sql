@@ -9,12 +9,19 @@ begin;
 insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'edson@example.com'),
   ('22222222-2222-2222-2222-222222222222', 'esposa@example.com'),
-  ('33333333-3333-3333-3333-333333333333', 'vitor-device@example.com');
+  ('33333333-3333-3333-3333-333333333333', 'vitor-device@example.com'),
+  ('66666666-6666-6666-6666-666666666666', 'ana-device@example.com');
 insert into parents (user_id, full_name) values
   ('11111111-1111-1111-1111-111111111111', 'Edson'),
   ('22222222-2222-2222-2222-222222222222', 'Esposa');
 insert into children (id, device_user_id, full_name, birthdate) values
-  ('44444444-4444-4444-4444-444444444444', '33333333-3333-3333-3333-333333333333', 'Vitor', '2019-01-01');
+  ('44444444-4444-4444-4444-444444444444', '33333333-3333-3333-3333-333333333333', 'Vitor', '2019-01-01'),
+  -- a second, real child that Vitor's device account does NOT own, used
+  -- below to prove the cross-child insert is rejected by RLS itself rather
+  -- than by the child_id foreign key (a non-existent child_id would fail
+  -- the FK regardless of whether RLS is even enabled, so it wouldn't prove
+  -- anything about the policy).
+  ('77777777-7777-7777-7777-777777777777', '66666666-6666-6666-6666-666666666666', 'Ana', '2021-01-01');
 
 -- the child device account can insert a locations row for its own child_id
 select test.assume_user('33333333-3333-3333-3333-333333333333');
@@ -22,18 +29,20 @@ insert into locations (child_id, lat, lng, recorded_at) values
   ('44444444-4444-4444-4444-444444444444', -23.55, -46.63, now());
 
 -- the child device account cannot insert a locations row for a child_id it
--- does not own
+-- does not own. The target child_id (Ana, 77777777...) genuinely exists in
+-- `children`, owned by a different device account, so this can only be
+-- rejected by the `locations_insert_own_child` RLS policy (SQLSTATE 42501
+-- / insufficient_privilege) -- there is no foreign key failure possible
+-- here, so any other exception must re-raise as a real test failure.
 do $$
 begin
   perform test.assume_user('33333333-3333-3333-3333-333333333333');
   insert into locations (child_id, lat, lng) values
-    ('99999999-9999-9999-9999-999999999999', -23.55, -46.63);
+    ('77777777-7777-7777-7777-777777777777', -23.55, -46.63);
   raise exception 'ASSERTION FAILED: child device account inserted a locations row for a child_id it does not own';
 exception
   when insufficient_privilege then
     null; -- expected: RLS rejected the insert
-  when foreign_key_violation then
-    null; -- expected: child_id does not exist, and RLS/FK both reject it
 end $$;
 
 -- the parent can select the inserted locations row
