@@ -63,23 +63,57 @@ project-specific convention, not a Supabase default.
 
 ## Commands
 
-```bash
-supabase init                      # already run; supabase/config.toml exists
-supabase start                     # bring up the local stack (needs Docker running)
-supabase stop                      # tear it down
+Local Docker Desktop/WSL2 on Windows turned out not to be viable for this
+project (WSL2's container runtime repeatedly hung and once took the whole
+machine down) — **this project has actually been tested, from very early
+in the implementation onward, against a Supabase dev stack running on a
+remote VPS over SSH**, not against a locally-running `supabase start`. Keep
+using that workflow:
 
-# Apply all migrations locally and re-run every RLS test:
-psql "$DATABASE_URL" -f supabase/tests/_helpers.sql
-psql "$DATABASE_URL" -f supabase/tests/0001_parents_and_children.test.sql
-# (repeat per migration number as they're added)
+```bash
+# SSH target (key-based auth, no password needed):
+#   root@193.203.182.112
+# Repo clone on the VPS, same branch as this worktree:
+#   /root/projetos/funfam
+
+# 1. Sync the VPS clone with whatever you just pushed/committed locally:
+ssh root@193.203.182.112 "cd /root/projetos/funfam && git fetch origin && git reset --hard origin/<branch>"
+
+# (If you're iterating on uncommitted local changes instead, scp the
+# changed file(s) to the same path under /root/projetos/funfam/ first.)
+
+# 2. Apply every migration fresh (also applies supabase/seed.sql — see the
+#    UUID-range note below) and bring up the dev stack:
+ssh root@193.203.182.112 "cd /root/projetos/funfam && supabase db reset"
+
+# 3. Run each RLS test file over SSH, against the VPS's local Postgres
+#    (reachable only via SSH, not exposed publicly):
+ssh root@193.203.182.112 "psql 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' -f /root/projetos/funfam/supabase/tests/0001_parents_and_children.test.sql"
+# (repeat per supabase/tests/000N_*.test.sql file)
 
 supabase link                      # connect to the real hosted project (Task 7 only)
 supabase db push                   # apply migrations to the hosted project
 ```
 
-Local Postgres requires Docker Desktop + WSL2 (Windows). If `docker info`
-fails, Docker Desktop likely isn't running yet — launch it and wait; it can
-take a few minutes on first start after install/reboot.
+**`seed.sql` uses its own UUID range, disjoint from every test file.**
+`supabase db reset` applies `supabase/seed.sql` (enabled via `[db.seed]` in
+`config.toml`) immediately after migrations, and those rows are never
+rolled back — unlike every `supabase/tests/*.test.sql` file's own fixtures,
+which live inside `begin; ... rollback;`. `seed.sql` therefore uses only
+hex-letter UUIDs (`aaaa…`/`bbbb…`/`cccc…`/`dddd…`/`eeee…`/`ffff…`) and a
+distinct email domain, deliberately disjoint from every test file's digit-
+only fixture UUIDs (`1111…`, `2222…`, `3333…`, `4444…`, `5555…`, `6666…`,
+`7777…`) and `@example.com` emails. If you ever add a new UUID to
+`seed.sql`, keep it in that same hex-letter range — otherwise a real
+`supabase db reset` followed by any test file's plain (non-`on conflict`)
+fixture insert will hit a unique-constraint violation against seed's
+permanently-committed rows.
+
+If you ever do need to debug against a local Docker stack instead: local
+Postgres requires Docker Desktop + WSL2 (Windows). If `docker info` fails,
+Docker Desktop likely isn't running yet — launch it and wait; it can take a
+few minutes on first start after install/reboot. This was never reliable
+enough to use as the actual test workflow for this project, though.
 
 ## Working process
 
