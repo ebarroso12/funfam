@@ -13,12 +13,16 @@ create table children (
 );
 
 create or replace function is_parent() returns boolean
-language sql security definer stable as $$
+language sql security definer stable
+set search_path = public
+as $$
   select exists (select 1 from parents where user_id = auth.uid());
 $$;
 
 create or replace function is_own_child(p_child_id uuid) returns boolean
-language sql security definer stable as $$
+language sql security definer stable
+set search_path = public
+as $$
   select exists (
     select 1 from children where id = p_child_id and device_user_id = auth.uid()
   );
@@ -38,8 +42,13 @@ create policy children_select_own on children for select
 
 -- Supabase's default table grants for the `authenticated` role (Dxtm) do not
 -- include select/insert/update, so without these grants every query is
--- blocked before RLS is even evaluated. RLS policies above are the actual
--- access-control layer: any operation with no matching policy is still
--- denied, so these grants do not widen access beyond what the policies allow.
-grant select, insert, update, delete on parents to authenticated;
+-- blocked before RLS is even evaluated. Grant only the operations each
+-- table's policies actually use today (least privilege): `parents` only
+-- has a select-self policy, so only select is granted; `children` has a
+-- `for all` policy for parents, so all four are granted there. RLS is
+-- still the layer that decides which rows/operations are actually allowed
+-- within what's granted here — but if a future policy on `parents` ever
+-- becomes permissive for insert/update/delete, the grant would need to be
+-- widened to match, so keep this comment in sync with the policies above.
+grant select on parents to authenticated;
 grant select, insert, update, delete on children to authenticated;
