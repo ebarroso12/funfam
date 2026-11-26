@@ -1,0 +1,45 @@
+create table parents (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  full_name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table children (
+  id uuid primary key default gen_random_uuid(),
+  device_user_id uuid not null unique references auth.users(id) on delete cascade,
+  full_name text not null,
+  birthdate date not null,
+  created_at timestamptz not null default now()
+);
+
+create or replace function is_parent() returns boolean
+language sql security definer stable as $$
+  select exists (select 1 from parents where user_id = auth.uid());
+$$;
+
+create or replace function is_own_child(p_child_id uuid) returns boolean
+language sql security definer stable as $$
+  select exists (
+    select 1 from children where id = p_child_id and device_user_id = auth.uid()
+  );
+$$;
+
+alter table parents enable row level security;
+alter table children enable row level security;
+
+create policy parents_select_self on parents for select
+  using (user_id = auth.uid());
+
+create policy children_all_for_parents on children for all
+  using (is_parent()) with check (is_parent());
+
+create policy children_select_own on children for select
+  using (device_user_id = auth.uid());
+
+-- Supabase's default table grants for the `authenticated` role (Dxtm) do not
+-- include select/insert/update, so without these grants every query is
+-- blocked before RLS is even evaluated. RLS policies above are the actual
+-- access-control layer: any operation with no matching policy is still
+-- denied, so these grants do not widen access beyond what the policies allow.
+grant select, insert, update, delete on parents to authenticated;
+grant select, insert, update, delete on children to authenticated;
